@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.3
+// @version      2.0.4
 // @description  React-panel nederst til høyre med Todoist-oppgaver og lokal tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
@@ -27,18 +27,12 @@
   const shadow = host.attachShadow({ mode: 'closed' })
   const styles = new CSSStyleSheet()
   const utilities = `.flex{display:flex}.items-center{align-items:center}.justify-between{justify-content:space-between}.gap-3{gap:.75rem}.truncate{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}`
-  styles.replaceSync(utilities + `:host{all:initial!important;display:block!important;position:fixed!important;right:max(16px,env(safe-area-inset-right))!important;bottom:max(16px,env(safe-area-inset-bottom))!important;z-index:2147483647!important;color:#f5f5f7!important;color-scheme:dark!important;font:14px/1.5 system-ui,sans-serif!important}*,*::before,*::after{box-sizing:border-box}button{color:inherit;background:#22232b;border:1px solid #3a3b46;cursor:pointer}button:hover{background:#30323e}:focus-visible{outline:2px solid #a7a7ff;outline-offset:3px}#dial,#close{display:grid;place-items:center;padding:0}#dial{width:52px;height:52px;border-radius:50%;box-shadow:0 8px 24px #0007}#dial[aria-expanded=true],.dial-actions button[aria-pressed=true]{background:#34344c}button svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#dial svg{grid-area:1/1;transition:opacity .16s,transform .2s}#dial .icon-close,#dial[aria-expanded=true] .icon-check{opacity:0;transform:scale(.8)}#dial[aria-expanded=true] .icon-close{opacity:1;transform:none}#panel{position:absolute;right:0;bottom:64px;width:min(340px,100vw - max(16px,env(safe-area-inset-right)) - max(16px,env(safe-area-inset-left)));height:min(420px,100dvh - max(16px,env(safe-area-inset-bottom)) - 80px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #383943;border-radius:16px;background:#17181e;box-shadow:0 16px 40px #0008;opacity:0;visibility:hidden;transform:translateY(8px) scale(.97);transform-origin:bottom right;transition:opacity .18s ease-in,transform .18s ease-in,visibility 0s .18s}#panel[data-open]{opacity:1;visibility:visible;transform:none;transition:opacity .15s ease-out,transform .15s cubic-bezier(.2,.75,.25,1),visibility 0s}#panel>header{flex:none;padding:12px 14px;border-bottom:1px solid #30313a}#title{margin:0;font-size:15px;font-weight:600}#close{width:36px;height:36px;border-radius:10px}#close svg{width:18px;height:18px}#content{flex:1;min-height:0;overflow:hidden;overscroll-behavior:contain;padding:16px}#content p{margin:0}.dial-form{display:grid;gap:10px}.dial-actions{display:flex;flex-wrap:wrap;gap:8px}.dial-form input,.dial-actions button{min-width:0;padding:9px 12px;border:1px solid #3a3b46;border-radius:9px;background:#22232b;color:inherit;font:inherit}.dial-actions button:hover{background:#30323e}@media(prefers-reduced-motion:reduce){#dial svg,#panel,#panel[data-open]{transition:none}#panel{transform:none}}`)
+  styles.replaceSync(utilities + `:host{all:initial!important;display:block!important;position:fixed!important;right:max(16px,env(safe-area-inset-right))!important;bottom:max(16px,env(safe-area-inset-bottom))!important;z-index:2147483647!important;color:#f5f5f7!important;color-scheme:dark!important;font:14px/1.5 system-ui,sans-serif!important}*,*::before,*::after{box-sizing:border-box}button{color:inherit;background:#22232b;border:1px solid #3a3b46;cursor:pointer}button:hover{background:#30323e}:focus-visible{outline:2px solid #a7a7ff;outline-offset:3px}#dial{display:grid;place-items:center;padding:0}#dial{width:52px;height:52px;border-radius:50%;box-shadow:0 8px 24px #0007}#dial[aria-expanded=true],.dial-actions button[aria-pressed=true]{background:#34344c}button svg{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}#dial svg{grid-area:1/1;transition:opacity .16s,transform .2s}#dial .icon-close,#dial[aria-expanded=true] .icon-check{opacity:0;transform:scale(.8)}#dial[aria-expanded=true] .icon-close{opacity:1;transform:none}#panel{position:absolute;right:0;bottom:64px;width:min(340px,100vw - max(16px,env(safe-area-inset-right)) - max(16px,env(safe-area-inset-left)));height:min(420px,100dvh - max(16px,env(safe-area-inset-bottom)) - 80px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #383943;border-radius:16px;background:#17181e;box-shadow:0 16px 40px #0008;opacity:0;visibility:hidden;transform:translateY(8px) scale(.97);transform-origin:bottom right;transition:opacity .18s ease-in,transform .18s ease-in,visibility 0s .18s}#panel[data-open]{opacity:1;visibility:visible;transform:none;transition:opacity .15s ease-out,transform .15s cubic-bezier(.2,.75,.25,1),visibility 0s}#content{flex:1;min-height:0;overflow:hidden}#content p{margin:0}.dial-form{display:grid;gap:10px}.dial-actions{display:flex;flex-wrap:wrap;gap:8px}.dial-form input,.dial-actions button{min-width:0;padding:9px 12px;border:1px solid #3a3b46;border-radius:9px;background:#22232b;color:inherit;font:inherit}.dial-actions button:hover{background:#30323e}@media(prefers-reduced-motion:reduce){#dial svg,#panel,#panel[data-open]{transition:none}#panel{transform:none}}`)
   shadow.adoptedStyleSheets = [styles]
 
   const closePath = 'm7 7 10 10M17 7 7 17'
   const html = `
-    <section id="panel" aria-labelledby="title" inert>
-      <header class="flex items-center justify-between gap-3">
-        <h2 id="title" class="truncate">Snarveier</h2>
-        <button id="close" type="button" aria-label="Lukk panel">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="${closePath}"/></svg>
-        </button>
-      </header>
+    <section id="panel" aria-label="Snarveier" tabindex="-1" inert>
       <div id="content"></div>
     </section>
     <button id="dial" type="button" aria-controls="panel" aria-expanded="false"
@@ -71,15 +65,8 @@
   } catch (error) {
     if (error.name !== 'TypeError') throw error
 
-    const panel = makeElement('section', { id: 'panel', 'aria-labelledby': 'title', inert: '' })
-    const header = makeElement('header', { class: 'flex items-center justify-between gap-3' })
-    const title = makeElement('h2', { id: 'title', class: 'truncate' })
-    title.textContent = 'Snarveier'
-
-    const close = makeElement('button', { id: 'close', type: 'button', 'aria-label': 'Lukk panel' })
-    close.append(makeIcon(closePath))
-    header.append(title, close)
-    panel.append(header, makeElement('div', { id: 'content' }))
+    const panel = makeElement('section', { id: 'panel', 'aria-label': 'Snarveier', tabindex: '-1', inert: '' })
+    panel.append(makeElement('div', { id: 'content' }))
 
     const dial = makeElement('button', {
       id: 'dial',
@@ -95,7 +82,6 @@
 
   const panel = shadow.getElementById('panel')
   const dial = shadow.getElementById('dial')
-  const close = shadow.getElementById('close')
   const content = shadow.getElementById('content')
   const tokenKey = 'tokens.todoist'
   const todoistToken = Object.freeze({
@@ -142,7 +128,7 @@
     const h = React.createElement
 
     const layoutCss = `
-      .dial-form.leinad-dial-layout {
+      .leinad-dial-layout {
         box-sizing: border-box;
         height: 100%;
         display: flex;
@@ -150,12 +136,33 @@
         min-width: 0;
       }
 
-      .leinad-dial-layout > nav { flex: none; }
+      .leinad-dial-header {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border-bottom: 1px solid #30313a;
+      }
+
+      .leinad-dial-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+
+      .leinad-dial-header .dial-actions button {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+      }
+
+      .leinad-dial-header button svg { width: 18px; height: 18px; }
 
       .leinad-dial-view {
         flex: 1;
         min-height: 0;
         overflow: auto;
+        overscroll-behavior: contain;
+        padding: 16px;
         animation: leinad-dial-enter 140ms ease-out both;
       }
 
@@ -199,26 +206,32 @@
       </form>
     `
 
+    const views = [
+      { id: 'main', label: 'Oppgaveliste', icon: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01' },
+      { id: 'settings', label: 'Innstillinger', icon: 'M10 3h4l.6 2.5 2 .9 2.4-1 2 3.5-1.9 1.7v2.8l1.9 1.7-2 3.5-2.4-1-2 .9L14 21h-4l-.6-2.5-2-.9-2.4 1-2-3.5 1.9-1.7v-2.8L3 8.9l2-3.5 2.4 1 2-.9L10 3Z' }
+    ]
+
     function Layout({ view, onViewChange, children }) {
       return h(
         'div',
-        { className: 'dial-form leinad-dial-layout' },
+        { className: 'leinad-dial-layout' },
         h('style', null, layoutCss),
-        h(
-          'nav',
-          { className: 'dial-actions', 'aria-label': 'Panelvisning' },
-          h('button', {
-            type: 'button',
-            'data-view': 'main',
-            'aria-pressed': view === 'main',
-            onClick: () => onViewChange('main')
-          }, 'Main'),
-          h('button', {
-            type: 'button',
-            'data-view': 'settings',
-            'aria-pressed': view === 'settings',
-            onClick: () => onViewChange('settings')
-          }, 'Innstillinger')
+        h('header', { className: 'leinad-dial-header' },
+          h('h2', null, 'Snarveier'),
+          h('nav', { className: 'dial-actions', 'aria-label': 'Panelvisning' },
+            views.map(({ id, label, icon }) => h('button', {
+              key: id,
+              type: 'button',
+              'data-view': id,
+              title: label,
+              'aria-label': label,
+              'aria-pressed': view === id,
+              onClick: () => onViewChange(id)
+            }, h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true },
+              h('path', { d: icon }),
+              id === 'settings' && h('circle', { cx: 12, cy: 12, r: 3 })
+            )))
+          )
         ),
         h('div', { className: 'leinad-dial-view', 'data-view-content': '', key: view }, children)
       )
@@ -359,7 +372,7 @@
     panel.toggleAttribute('data-open', open)
     if (open) {
       mountContent()
-      close.focus({ preventScroll: true })
+      panel.focus({ preventScroll: true })
     }
   }
 
@@ -368,7 +381,6 @@
   }
 
   dial.addEventListener('click', togglePanel)
-  close.addEventListener('click', () => setOpen(false))
 
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape' || event.repeat || event.defaultPrevented || event.isComposing) return
