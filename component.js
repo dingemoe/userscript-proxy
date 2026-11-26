@@ -113,20 +113,6 @@ var LeinadDialComponent = (() => {
     )
   }
 
-  async function listTasks(requestTodoist, token) {
-    const tasks = []
-    let cursor
-    do {
-      const query = new URLSearchParams({ limit: '100' })
-      if (cursor) query.set('cursor', cursor)
-      const page = await requestTodoist(query, token)
-      if (!Array.isArray(page.results)) throw new Error('Uventet svar fra Todoist.')
-      tasks.push(...page.results)
-      cursor = page.next_cursor
-    } while (cursor)
-    return tasks
-  }
-
   function Main({ token, result, onRefresh }) {
     if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
@@ -190,7 +176,7 @@ var LeinadDialComponent = (() => {
 
   const loading = { loading: true }
 
-  return function LeinadDialComponent({ todoistToken, requestTodoist }) {
+  return function LeinadDialComponent({ todoistToken, loadTasks }) {
     const [view, setView] = React.useState('main')
     const [token, setToken] = React.useState(() => todoistToken.get())
     const [refresh, setRefresh] = React.useState(0)
@@ -199,12 +185,12 @@ var LeinadDialComponent = (() => {
     React.useEffect(() => {
       if (!token) return
       let current = true
-      listTasks(requestTodoist, token).then(
+      loadTasks(token, { refresh: refresh > 0 }).then(
         tasks => { if (current) setResult({ tasks }) },
         error => { if (current) setResult({ error: error.message }) }
       )
       return () => { current = false }
-    }, [token, refresh, requestTodoist])
+    }, [token, refresh, loadTasks])
 
     function refreshTasks() {
       setResult(loading)
