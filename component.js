@@ -16,12 +16,10 @@ var LeinadDialComponent = (() => {
       flex: none;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      justify-content: flex-end;
       padding: 12px 14px;
       border-bottom: 1px solid #30313a;
     }
-
-    .leinad-dial-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
 
     .leinad-dial-header .dial-actions button {
       width: 36px;
@@ -98,7 +96,6 @@ var LeinadDialComponent = (() => {
       { className: 'leinad-dial-layout' },
       h('style', null, layoutCss),
       h('header', { className: 'leinad-dial-header' },
-        h('h2', null, 'Snarveier'),
         h('nav', { className: 'dial-actions', 'aria-label': 'Panelvisning' },
           views.map(({ id, label, icon }) => h('button', {
             key: id,
@@ -177,18 +174,21 @@ var LeinadDialComponent = (() => {
 
   const loading = { loading: true }
 
-  return function LeinadDialComponent({ todoistToken, loadTasks }) {
+  return function LeinadDialComponent({ todoistToken, loadTasks, readTasks }) {
     const [view, setView] = React.useState('main')
     const [token, setToken] = React.useState(() => todoistToken.get())
     const [refresh, setRefresh] = React.useState(0)
-    const [result, setResult] = React.useState(loading)
+    const [result, setResult] = React.useState(() => {
+      const tasks = readTasks()
+      return Array.isArray(tasks) ? { tasks } : loading
+    })
 
     React.useEffect(() => {
       if (!token) return
       let current = true
       loadTasks(token, { refresh: refresh > 0 }).then(
         tasks => { if (current) setResult({ tasks }) },
-        error => { if (current) setResult({ error: error.message }) }
+        error => { if (current) setResult(previous => ({ tasks: previous.tasks, error: error.message })) }
       )
       return () => { current = false }
     }, [token, refresh, loadTasks])
