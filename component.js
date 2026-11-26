@@ -4,10 +4,9 @@ var LeinadDialComponent = (() => {
   const h = React.createElement
 
   const layoutCss = `
-    .leinad-dial-layout {
+    .dial-form.leinad-dial-layout {
       box-sizing: border-box;
-      height: min(320px, 58vh);
-      height: min(320px, 58dvh);
+      height: 100%;
       display: flex;
       flex-direction: column;
       min-width: 0;
@@ -22,6 +21,18 @@ var LeinadDialComponent = (() => {
       animation: leinad-dial-enter 140ms ease-out both;
     }
 
+    .leinad-task-list { list-style: none; margin: 8px 0 0; padding: 0; }
+    .leinad-task-list li { border-bottom: 1px solid #30313a; }
+    .leinad-task-list a {
+      display: block;
+      padding: 9px 4px;
+      color: inherit;
+      text-decoration: none;
+      overflow-wrap: anywhere;
+    }
+    .leinad-task-list a:hover { background: #22232b; }
+    .leinad-task-list small { display: block; color: #b5b6c4; }
+
     @keyframes leinad-dial-enter {
       from { opacity: 0.75; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
@@ -31,11 +42,6 @@ var LeinadDialComponent = (() => {
       .leinad-dial-view { animation: none; }
     }
   `
-
-  const mainHtml = {
-    configured: `<p>Todoist-token er lagret.</p>`,
-    missing: `<p>Legg inn Todoist-tokenet under Innstillinger.</p>`
-  }
 
   const settingsHtml = `
     <form class="dial-form" autocomplete="off">
@@ -80,12 +86,43 @@ var LeinadDialComponent = (() => {
     )
   }
 
-  function Main({ hasToken }) {
-    return h('div', {
-      dangerouslySetInnerHTML: {
-        __html: hasToken ? mainHtml.configured : mainHtml.missing
-      }
-    })
+  async function listTasks(requestTodoist, token) {
+    const tasks = []
+    let cursor
+    do {
+      const query = new URLSearchParams({ limit: '100' })
+      if (cursor) query.set('cursor', cursor)
+      const page = await requestTodoist(query, token)
+      if (!Array.isArray(page.results)) throw new Error('Uventet svar fra Todoist.')
+      tasks.push(...page.results)
+      cursor = page.next_cursor
+    } while (cursor)
+    return tasks
+  }
+
+  function Main({ token, result, onRefresh }) {
+    if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
+
+    return h(
+      React.Fragment,
+      null,
+      h('div', { className: 'dial-actions items-center justify-between' },
+        h('strong', null, 'Todoist'),
+        h('button', { type: 'button', onClick: onRefresh, disabled: result.loading }, 'Oppdater')
+      ),
+      result.loading && h('p', { role: 'status' }, 'Henter oppgaver …'),
+      result.error && h('p', { role: 'alert' }, result.error),
+      result.tasks && (result.tasks.length
+        ? h('ul', { className: 'leinad-task-list' }, result.tasks.map(task =>
+          h('li', { key: task.id },
+            h('a', {
+              href: 'https://app.todoist.com/app/task/' + encodeURIComponent(task.id),
+              target: '_blank',
+              rel: 'noopener noreferrer'
+            }, task.content, task.due?.date && h('small', null, task.due.date))
+          )))
+        : h('p', { role: 'status' }, 'Ingen aktive oppgaver.'))
+    )
   }
 
   function Settings({ todoistToken, onTokenChange }) {
@@ -109,7 +146,7 @@ var LeinadDialComponent = (() => {
         else todoistToken.set(token)
 
         form.reset()
-        onTokenChange(!isClear)
+        onTokenChange(isClear ? '' : token)
         status.textContent = isClear ? 'Token fjernet.' : 'Token lagret.'
       } catch {
         status.textContent = isClear
@@ -124,16 +161,40 @@ var LeinadDialComponent = (() => {
     })
   }
 
-  return function LeinadDialComponent({ todoistToken }) {
+  const loading = { loading: true }
+
+  return function LeinadDialComponent({ todoistToken, requestTodoist }) {
     const [view, setView] = React.useState('main')
-    const [hasToken, setHasToken] = React.useState(() => Boolean(todoistToken.get()))
+    const [token, setToken] = React.useState(() => todoistToken.get())
+    const [refresh, setRefresh] = React.useState(0)
+    const [result, setResult] = React.useState(loading)
+
+    React.useEffect(() => {
+      if (!token) return
+      let current = true
+      listTasks(requestTodoist, token).then(
+        tasks => { if (current) setResult({ tasks }) },
+        error => { if (current) setResult({ error: error.message }) }
+      )
+      return () => { current = false }
+    }, [token, refresh, requestTodoist])
+
+    function refreshTasks() {
+      setResult(loading)
+      setRefresh(value => value + 1)
+    }
+
+    function changeToken(value) {
+      setToken(value)
+      if (value) refreshTasks()
+    }
 
     return h(
       Layout,
       { view, onViewChange: setView },
       view === 'settings'
-        ? h(Settings, { todoistToken, onTokenChange: setHasToken })
-        : h(Main, { hasToken })
+        ? h(Settings, { todoistToken, onTokenChange: changeToken })
+        : h(Main, { token, result, onRefresh: refreshTasks })
     )
   }
 })()
