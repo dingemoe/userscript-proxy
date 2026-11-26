@@ -29,7 +29,12 @@ var LeinadDialComponent = (() => {
       display: grid;
       place-items: center;
       padding: 0;
+      border: 0;
+      background: transparent;
+      color: #b5b6c4;
     }
+
+    .leinad-dial-header .dial-actions button:is(:hover, [aria-pressed=true]) { color: #a7a7ff; }
 
     .leinad-dial-header button svg { width: 18px; height: 18px; }
 
@@ -113,16 +118,12 @@ var LeinadDialComponent = (() => {
     )
   }
 
-  function Main({ token, result, onRefresh }) {
+  function Main({ token, result }) {
     if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
     return h(
       React.Fragment,
       null,
-      h('div', { className: 'dial-actions items-center justify-between' },
-        h('strong', null, 'Todoist'),
-        h('button', { type: 'button', onClick: onRefresh, disabled: result.loading }, 'Oppdater')
-      ),
       result.loading && h('p', { role: 'status' }, 'Henter oppgaver …'),
       result.error && h('p', { role: 'alert' }, result.error),
       result.tasks && (result.tasks.length
@@ -207,7 +208,7 @@ var LeinadDialComponent = (() => {
       { view, onViewChange: setView },
       view === 'settings'
         ? h(Settings, { todoistToken, onTokenChange: changeToken })
-        : h(Main, { token, result, onRefresh: refreshTasks })
+        : h(Main, { token, result })
     )
   }
 })()
