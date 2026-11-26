@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.6
+// @version      2.0.7
 // @description  React-panel nederst til høyre med Todoist-oppgaver og lokal tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
@@ -151,11 +151,7 @@
   }
 
   function loadTasks(token, { refresh = false } = {}) {
-    if (!refresh) {
-      if (taskRequest?.token === token) return taskRequest.promise
-      const cached = GM_getValue(tasksKey, null)
-      if (Array.isArray(cached)) return Promise.resolve(cached)
-    }
+    if (taskRequest?.token === token && (!refresh || taskRequest.pending)) return taskRequest.promise
 
     const promise = fetchTasks(token).then(tasks => {
       if (taskRequest?.promise === promise && todoistToken.get() === token) {
@@ -163,76 +159,19 @@
       }
       return tasks
     })
-    taskRequest = { token, promise }
-    promise.catch(() => {
-      if (taskRequest?.promise === promise) taskRequest = undefined
-    })
+    const request = { token, promise, pending: true }
+    taskRequest = request
+    promise.then(
+      () => { request.pending = false },
+      () => { if (taskRequest === request) taskRequest = undefined }
+    )
     return promise
   }
 
   function createDialComponent() {
     const h = React.createElement
 
-    const layoutCss = `
-      .leinad-dial-layout {
-        box-sizing: border-box;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-      }
-
-      .leinad-dial-header {
-        flex: none;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 14px;
-        border-bottom: 1px solid #30313a;
-      }
-
-      .leinad-dial-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
-
-      .leinad-dial-header .dial-actions button {
-        width: 36px;
-        height: 36px;
-        display: grid;
-        place-items: center;
-        padding: 0;
-      }
-
-      .leinad-dial-header button svg { width: 18px; height: 18px; }
-
-      .leinad-dial-view {
-        flex: 1;
-        min-height: 0;
-        overflow: auto;
-        overscroll-behavior: contain;
-        padding: 16px;
-        animation: leinad-dial-enter 140ms ease-out both;
-      }
-
-      .leinad-task-list { list-style: none; margin: 8px 0 0; padding: 0; }
-      .leinad-task-list li { border-bottom: 1px solid #30313a; }
-      .leinad-task-list a {
-        display: block;
-        padding: 9px 4px;
-        color: inherit;
-        text-decoration: none;
-        overflow-wrap: anywhere;
-      }
-      .leinad-task-list a:hover { background: #22232b; }
-      .leinad-task-list small { display: block; color: #b5b6c4; }
-
-      @keyframes leinad-dial-enter {
-        from { opacity: 0.75; transform: translateY(4px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-
-      @media (prefers-reduced-motion: reduce) {
-        .leinad-dial-view { animation: none; }
-      }
-    `
+    const layoutCss = `.leinad-dial-layout{box-sizing:border-box;height:100%;display:flex;flex-direction:column;min-width:0}.leinad-dial-header{flex:none;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #30313a}.leinad-dial-header h2{margin:0;font-size:15px;font-weight:600}.leinad-dial-header .dial-actions button{width:36px;height:36px;display:grid;place-items:center;padding:0}.leinad-dial-header button svg{width:18px;height:18px}.leinad-dial-view{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px;animation:leinad-dial-enter 140ms ease-out both}.leinad-task-list{list-style:none;margin:8px 0 0;padding:0}.leinad-task-list li{border-bottom:1px solid #30313a}.leinad-task-list a{display:block;padding:9px 4px;color:inherit;text-decoration:none;overflow-wrap:anywhere}.leinad-task-list a:hover{background:#22232b}.leinad-task-list small{display:block;color:#b5b6c4}@keyframes leinad-dial-enter{from{opacity:0.75;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media (prefers-reduced-motion:reduce){.leinad-dial-view{animation:none}}`
 
     const settingsHtml = `
       <form class="dial-form" autocomplete="off">
@@ -346,18 +285,21 @@
 
     const loading = { loading: true }
 
-    return function LeinadDialComponent({ todoistToken, loadTasks }) {
+    return function LeinadDialComponent({ todoistToken, loadTasks, readTasks }) {
       const [view, setView] = React.useState('main')
       const [token, setToken] = React.useState(() => todoistToken.get())
       const [refresh, setRefresh] = React.useState(0)
-      const [result, setResult] = React.useState(loading)
+      const [result, setResult] = React.useState(() => {
+        const tasks = readTasks()
+        return Array.isArray(tasks) ? { tasks } : loading
+      })
 
       React.useEffect(() => {
         if (!token) return
         let current = true
         loadTasks(token, { refresh: refresh > 0 }).then(
           tasks => { if (current) setResult({ tasks }) },
-          error => { if (current) setResult({ error: error.message }) }
+          error => { if (current) setResult(previous => ({ tasks: previous.tasks, error: error.message })) }
         )
         return () => { current = false }
       }, [token, refresh, loadTasks])
@@ -393,7 +335,11 @@
     }
 
     root = ReactDOM.createRoot(content)
-    root.render(React.createElement(createDialComponent(), { todoistToken, loadTasks }))
+    root.render(React.createElement(createDialComponent(), {
+      todoistToken,
+      loadTasks,
+      readTasks: () => todoistToken.get() ? GM_getValue(tasksKey, null) : null
+    }))
   }
 
   function setOpen(open) {
@@ -423,5 +369,6 @@
   document.documentElement.append(host)
 
   const savedToken = todoistToken.get()
-  if (savedToken && !Array.isArray(GM_getValue(tasksKey, null))) loadTasks(savedToken)
+  if (savedToken) loadTasks(savedToken)
+  mountContent()
 })()
