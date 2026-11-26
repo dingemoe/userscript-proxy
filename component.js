@@ -172,7 +172,8 @@ var LeinadDialComponent = (() => {
           checked,
           disabled: busy,
           'aria-label': (completed ? 'Gjenåpne ' : 'Fullfør ') + task.content,
-          onChange: onToggle
+          readOnly: true,
+          onClick: onToggle
         }),
         h('a', {
           href: 'https://app.todoist.com/app/task/' + encodeURIComponent(task.id),
@@ -324,9 +325,9 @@ var LeinadDialComponent = (() => {
 
   const loading = { loading: true }
 
-  return function LeinadDialComponent({ todoistToken, loadTasks, readTasks, mutateTask }) {
+  return function LeinadDialComponent({ todoistToken, loadTasks, readTasks, mutateTask, readCompleted, writeCompleted }) {
     const [view, setView] = React.useState('main')
-    const [completedTasks, setCompletedTasks] = React.useState([])
+    const [completedTasks, setCompletedTasks] = React.useState(() => readCompleted?.() ?? [])
     const [token, setToken] = React.useState(() => todoistToken.get())
     const [refresh, setRefresh] = React.useState(0)
     const [result, setResult] = React.useState(() => {
@@ -343,6 +344,10 @@ var LeinadDialComponent = (() => {
       )
       return () => { current = false }
     }, [token, refresh, loadTasks])
+
+    React.useEffect(() => {
+      if (token) writeCompleted?.(completedTasks)
+    }, [token, completedTasks, writeCompleted])
 
     function refreshTasks() {
       setResult(loading)
@@ -372,7 +377,7 @@ function mountLeinadDial(runtime) {
 
   const host = document.createElement('tm-dial-panel')
   if (document.querySelector(host.localName)) return
-  host.dataset.componentRevision = 'task-checkbox-3'
+  host.dataset.componentRevision = 'task-checkbox-4'
 
   const shadow = host.attachShadow({ mode: 'closed' })
   const styles = new CSSStyleSheet()
@@ -435,6 +440,7 @@ function mountLeinadDial(runtime) {
   const content = shadow.getElementById('content')
   const tokenKey = 'tokens.todoist'
   const tasksKey = 'cache.todoist.tasks'
+  const completedKey = 'cache.todoist.completed'
   let taskRequest
 
   const todoistToken = Object.freeze({
@@ -442,11 +448,13 @@ function mountLeinadDial(runtime) {
     set: (token) => {
       if (token === GM_getValue(tokenKey, '')) return
       GM_deleteValue(tasksKey)
+      GM_deleteValue(completedKey)
       GM_setValue(tokenKey, token)
       taskRequest = undefined
     },
     clear: () => {
       GM_deleteValue(tasksKey)
+      GM_deleteValue(completedKey)
       GM_deleteValue(tokenKey)
       taskRequest = undefined
     }
@@ -596,7 +604,16 @@ function mountLeinadDial(runtime) {
 
     taskRequest = undefined
     try {
-      return { tasks: await loadTasks(token, { refresh: true }) }
+      const refreshed = await loadTasks(token, { refresh: true })
+      if (action === 'reopen' && !refreshed.some(item => item.id === task.id)) {
+        const restored = [...refreshed, task]
+        if (todoistToken.get() === token) {
+          GM_setValue(tasksKey, restored)
+          taskRequest = { token, promise: Promise.resolve(restored), pending: false }
+        }
+        return { tasks: restored }
+      }
+      return { tasks: refreshed }
     } catch {
       return { tasks, refreshFailed: true }
     }
@@ -617,7 +634,9 @@ function mountLeinadDial(runtime) {
       todoistToken,
       loadTasks,
       mutateTask,
-      readTasks: () => todoistToken.get() ? GM_getValue(tasksKey, null) : null
+      readTasks: () => todoistToken.get() ? GM_getValue(tasksKey, null) : null,
+      readCompleted: () => todoistToken.get() ? GM_getValue(completedKey, []) : [],
+      writeCompleted: tasks => GM_setValue(completedKey, tasks)
     }))
   }
 
