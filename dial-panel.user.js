@@ -1,20 +1,20 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.0
+// @version      2.0.1
 // @description  React-panel nederst til høyre med lokal Todoist-tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
 // @noframes
 // @sandbox      DOM
-// @grant        GM_xmlhttpRequest
-// @connect      cdn.jsdelivr.net
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_deleteValue
 // @updateURL    https://raw.githubusercontent.com/dingemoe/userscript-proxy/main/dial-panel.user.js
 // @downloadURL  https://raw.githubusercontent.com/dingemoe/userscript-proxy/main/dial-panel.user.js
-//
+// @require      https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js
+// @require      https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js
+// @require      https://cdn.jsdelivr.net/gh/dingemoe/userscript-proxy@069b5ee34b66d8c6d8ada40dfaa81fbfaf6bd0e2/component.js
 // ==/UserScript==
 
 (() => {
@@ -103,66 +103,19 @@
     clear: () => GM_deleteValue(tokenKey)
   })
 
-  const cdn = 'https://cdn.jsdelivr.net'
-  const reactUrl = cdn + '/npm/react@18.3.1/umd/react.production.min.js'
-  const reactDomUrl = cdn + '/npm/react-dom@18.3.1/umd/react-dom.production.min.js'
-  const componentUrl = cdn + '/gh/dingemoe/userscript-proxy@069b5ee34b66d8c6d8ada40dfaa81fbfaf6bd0e2/component.js'
-
-  function loadText(url) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url,
-        anonymous: true,
-        timeout: 12000,
-        onload: ({ status, responseText }) => {
-          if (status === 200) resolve(responseText)
-          else reject(new Error('HTTP ' + status))
-        },
-        onerror: reject,
-        ontimeout: reject,
-        onabort: reject
-      })
-    })
-  }
-
-  function loadModule(source, require) {
-    const module = { exports: {} }
-    new Function('module', 'exports', 'require', source)(module, module.exports, require)
-    return module.exports
-  }
-
   let root
-  let loading = false
 
-  async function mountContent() {
-    if (root || loading) return
-    loading = true
-    content.textContent = 'Laster panelet …'
+  function mountContent() {
+    if (root) return
 
-    try {
-      const [reactSource, domSource, componentSource] = await Promise.all(
-        [reactUrl, reactDomUrl, componentUrl].map(loadText)
-      )
-      const React = loadModule(reactSource)
-      const ReactDOM = loadModule(domSource, (name) => {
-        if (name === 'react') return React
-        throw new Error('Ukjent avhengighet: ' + name)
-      })
-      const Component = new Function(
-        'React',
-        'ReactDOM',
-        componentSource + '\nreturn LeinadDialComponent;'
-      )(React, ReactDOM)
-
-      root = ReactDOM.createRoot(content)
-      root.render(React.createElement(Component, { todoistToken }))
-    } catch (error) {
-      console.error('[Dial Panel]', error)
-      content.textContent = 'Kunne ikke laste panelet. Lukk og åpne for å prøve igjen.'
-    } finally {
-      loading = false
+    if (typeof React === 'undefined' || typeof ReactDOM === 'undefined' ||
+        typeof LeinadDialComponent !== 'function') {
+      content.textContent = 'React eller component.js er utilgjengelig. Oppdater userscriptet i Tampermonkey.'
+      return
     }
+
+    root = ReactDOM.createRoot(content)
+    root.render(React.createElement(LeinadDialComponent, { todoistToken }))
   }
 
   function setOpen(open) {
