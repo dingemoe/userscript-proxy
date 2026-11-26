@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.4
+// @version      2.0.5
 // @description  React-panel nederst til høyre med Todoist-oppgaver og lokal tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
@@ -84,10 +84,15 @@
   const dial = shadow.getElementById('dial')
   const content = shadow.getElementById('content')
   const tokenKey = 'tokens.todoist'
+  let taskRequest
+
   const todoistToken = Object.freeze({
     get: () => GM_getValue(tokenKey, ''),
     set: (token) => GM_setValue(tokenKey, token),
-    clear: () => GM_deleteValue(tokenKey)
+    clear: () => {
+      GM_deleteValue(tokenKey)
+      taskRequest = undefined
+    }
   })
 
   function requestTodoist(query, token) {
@@ -122,6 +127,31 @@
         }
       })
     })
+  }
+
+  async function fetchTasks(token) {
+    const tasks = []
+    let cursor
+    do {
+      const query = new URLSearchParams({ limit: '100' })
+      if (cursor) query.set('cursor', cursor)
+      const page = await requestTodoist(query, token)
+      if (!Array.isArray(page.results)) throw new Error('Uventet svar fra Todoist.')
+      tasks.push(...page.results)
+      cursor = page.next_cursor
+    } while (cursor)
+    return tasks
+  }
+
+  function loadTasks(token, { refresh = false } = {}) {
+    if (!refresh && taskRequest?.token === token) return taskRequest.promise
+
+    const promise = fetchTasks(token)
+    taskRequest = { token, promise }
+    promise.catch(() => {
+      if (taskRequest?.promise === promise) taskRequest = undefined
+    })
+    return promise
   }
 
   function createDialComponent() {
@@ -237,20 +267,6 @@
       )
     }
 
-    async function listTasks(requestTodoist, token) {
-      const tasks = []
-      let cursor
-      do {
-        const query = new URLSearchParams({ limit: '100' })
-        if (cursor) query.set('cursor', cursor)
-        const page = await requestTodoist(query, token)
-        if (!Array.isArray(page.results)) throw new Error('Uventet svar fra Todoist.')
-        tasks.push(...page.results)
-        cursor = page.next_cursor
-      } while (cursor)
-      return tasks
-    }
-
     function Main({ token, result, onRefresh }) {
       if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
@@ -314,7 +330,7 @@
 
     const loading = { loading: true }
 
-    return function LeinadDialComponent({ todoistToken, requestTodoist }) {
+    return function LeinadDialComponent({ todoistToken, loadTasks }) {
       const [view, setView] = React.useState('main')
       const [token, setToken] = React.useState(() => todoistToken.get())
       const [refresh, setRefresh] = React.useState(0)
@@ -323,12 +339,12 @@
       React.useEffect(() => {
         if (!token) return
         let current = true
-        listTasks(requestTodoist, token).then(
+        loadTasks(token, { refresh: refresh > 0 }).then(
           tasks => { if (current) setResult({ tasks }) },
           error => { if (current) setResult({ error: error.message }) }
         )
         return () => { current = false }
-      }, [token, refresh, requestTodoist])
+      }, [token, refresh, loadTasks])
 
       function refreshTasks() {
         setResult(loading)
@@ -361,7 +377,7 @@
     }
 
     root = ReactDOM.createRoot(content)
-    root.render(React.createElement(createDialComponent(), { todoistToken, requestTodoist }))
+    root.render(React.createElement(createDialComponent(), { todoistToken, loadTasks }))
   }
 
   function setOpen(open) {
@@ -389,4 +405,7 @@
   })
 
   document.documentElement.append(host)
+
+  const savedToken = todoistToken.get()
+  if (savedToken) loadTasks(savedToken)
 })()
