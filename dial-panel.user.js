@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.9
+// @version      2.0.10
 // @description  React-panel nederst til høyre med Todoist-oppgaver og lokal tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
@@ -103,16 +103,20 @@
     }
   })
 
-  function requestTodoist(query, token) {
+  function requestTodoist(token, path, { method = 'GET', body } = {}) {
     return new Promise((resolve, reject) => {
       function connectionError() {
         reject(new Error('Kunne ikke kontakte Todoist. Prøv igjen.'))
       }
 
       GM_xmlhttpRequest({
-        method: 'GET',
-        url: 'https://api.todoist.com/api/v1/tasks?' + query,
-        headers: { Authorization: 'Bearer ' + token },
+        method,
+        url: 'https://api.todoist.com/api/v1/tasks' + path,
+        headers: {
+          Authorization: 'Bearer ' + token,
+          ...(body && { 'Content-Type': 'application/json' })
+        },
+        data: body ? JSON.stringify(body) : undefined,
         anonymous: true,
         redirect: 'error',
         timeout: 12000,
@@ -123,8 +127,12 @@
             reject(new Error('Todoist avviste tilgangen. Sjekk tokenet i Innstillinger.'))
             return
           }
-          if (response.status !== 200) {
+          if (response.status < 200 || response.status >= 300) {
             reject(new Error('Kunne ikke hente oppgaver fra Todoist (' + response.status + ').'))
+            return
+          }
+          if (response.status === 204 || !response.responseText) {
+            resolve(null)
             return
           }
           try {
@@ -143,7 +151,7 @@
     do {
       const query = new URLSearchParams({ limit: '100' })
       if (cursor) query.set('cursor', cursor)
-      const page = await requestTodoist(query, token)
+      const page = await requestTodoist(token, '?' + query)
       if (!Array.isArray(page.results)) throw new Error('Uventet svar fra Todoist.')
       tasks.push(...page.results)
       cursor = page.next_cursor
@@ -169,10 +177,148 @@
     return promise
   }
 
+  let mutationPending = false
+
+  async function mutateTask(token, action, task, fields) {
+    if (mutationPending) throw new Error('Vent til den forrige endringen er ferdig.')
+    mutationPending = true
+    try {
+      return await saveTaskChange(token, action, task, fields)
+    } finally {
+      mutationPending = false
+    }
+  }
+
+  async function saveTaskChange(token, action, task, fields) {
+    const id = task.id ? '/' + encodeURIComponent(task.id) : ''
+    const routes = {
+      create: ['POST', ''],
+      update: ['POST', id],
+      delete: ['DELETE', id],
+      close: ['POST', id + '/close'],
+      reopen: ['POST', id + '/reopen']
+    }
+    const [method, path] = routes[action]
+    if (action !== 'create' && !id) throw new Error('Oppgaven mangler ID.')
+    if (taskRequest?.token === token && taskRequest.pending) await taskRequest.promise.catch(() => {})
+    if (todoistToken.get() !== token) throw new Error('Todoist-tokenet er endret.')
+
+    const saved = await requestTodoist(token, path, { method, body: fields })
+    if (todoistToken.get() !== token) throw new Error('Todoist-tokenet er endret.')
+
+    let tasks = GM_getValue(tasksKey, [])
+    if (!Array.isArray(tasks)) tasks = []
+    if (action === 'delete' || (action === 'close' && !task.due?.is_recurring)) {
+      const removed = new Set([task.id])
+      let size
+      do {
+        size = removed.size
+        for (const item of tasks) {
+          if (removed.has(item.parent_id)) removed.add(item.id)
+        }
+      } while (size !== removed.size)
+      tasks = tasks.filter(item => !removed.has(item.id))
+    } else if (action === 'update') {
+      tasks = tasks.map(item => item.id === task.id ? (saved ?? { ...item, ...fields }) : item)
+    } else if (action === 'create' && saved?.id) {
+      tasks = [...tasks.filter(item => item.id !== saved.id), saved]
+    } else if (action === 'reopen' && !tasks.some(item => item.id === task.id)) {
+      tasks = [...tasks, task]
+    }
+
+    GM_setValue(tasksKey, tasks)
+    taskRequest = undefined
+    try {
+      return { tasks: await loadTasks(token, { refresh: true }) }
+    } catch {
+      return { tasks, refreshFailed: true }
+    }
+  }
+
   function createDialComponent() {
     const h = React.createElement
 
-    const layoutCss = `.leinad-dial-layout{box-sizing:border-box;height:100%;display:flex;flex-direction:column;min-width:0}.leinad-dial-header{flex:none;display:flex;align-items:center;justify-content:flex-end;padding:12px 14px;border-bottom:1px solid #30313a}.leinad-dial-header .dial-actions button{width:36px;height:36px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:#b5b6c4}.leinad-dial-header .dial-actions button:is(:hover,[aria-pressed=true]){color:#a7a7ff}.leinad-dial-header button svg{width:18px;height:18px}.leinad-dial-view{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px;animation:leinad-dial-enter 140ms ease-out both}.leinad-task-list{list-style:none;margin:8px 0 0;padding:0}.leinad-task-list li{border-bottom:1px solid #30313a}.leinad-task-list a{display:block;padding:9px 4px;color:inherit;text-decoration:none;overflow-wrap:anywhere}.leinad-task-list a:hover{background:#22232b}.leinad-task-list small{display:block;color:#b5b6c4}@keyframes leinad-dial-enter{from{opacity:0.75;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media (prefers-reduced-motion:reduce){.leinad-dial-view{animation:none}}`
+    const layoutCss = `
+      .leinad-dial-layout {
+        box-sizing: border-box;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+
+      .leinad-dial-header {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 12px 14px;
+        border-bottom: 1px solid #30313a;
+      }
+
+      .leinad-dial-header .dial-actions button {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: #b5b6c4;
+      }
+
+      .leinad-dial-header .dial-actions button:is(:hover, [aria-pressed=true]) { color: #a7a7ff; }
+
+      .leinad-dial-header button svg { width: 18px; height: 18px; }
+
+      .leinad-dial-view {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+        padding: 16px;
+        animation: leinad-dial-enter 140ms ease-out both;
+      }
+
+      .leinad-task-list { list-style: none; margin: 8px 0 0; padding: 0; }
+      .leinad-task-list li { border-bottom: 1px solid #30313a; }
+      .leinad-task-list a {
+        display: block;
+        padding: 9px 4px;
+        color: inherit;
+        text-decoration: none;
+        overflow-wrap: anywhere;
+      }
+      .leinad-task-list a:hover { background: #22232b; }
+      .leinad-task-list small { display: block; color: #b5b6c4; }
+
+      .leinad-task-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+      .leinad-task-row > a { flex: 1; min-width: 0; }
+      .leinad-task-row input { accent-color: #a7a7ff; }
+      .leinad-task-chip { flex: none; padding: 4px 8px; border-radius: 999px; font: inherit; }
+      .leinad-task-links { margin: 0 0 8px 24px; padding: 0; list-style: none; }
+      .leinad-task-links a { color: #a7a7ff; }
+      .leinad-task-editor textarea {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 9px 12px;
+        border: 1px solid #3a3b46;
+        border-radius: 9px;
+        background: #22232b;
+        color: inherit;
+        font: inherit;
+        resize: vertical;
+      }
+
+      @keyframes leinad-dial-enter {
+        from { opacity: 0.75; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .leinad-dial-view { animation: none; }
+      }
+    `
 
     const settingsHtml = `
       <form class="dial-form" autocomplete="off">
@@ -222,23 +368,144 @@
       )
     }
 
-    function Main({ token, result }) {
+    function taskLinks(task) {
+      const markdown = /\[([^\]\n]+)\]\(<?(https?:\/\/[^\s)>]+)>?\)/gi
+      const plain = /https?:\/\/[^\s<>"\]]+/gi
+      const links = new Map()
+
+      function addLink(raw, label) {
+        try {
+          const url = new URL(raw)
+          if (!links.has(url.href)) links.set(url.href, label || url.hostname)
+        } catch {
+          // Ignore malformed URLs in the task text.
+        }
+      }
+
+      for (const text of [task.content ?? '', task.description ?? '']) {
+        const remaining = text.replace(markdown, (_, label, url) => {
+          addLink(url, label)
+          return ' '
+        })
+        for (const match of remaining.matchAll(plain)) {
+          let url = match[0].replace(/[.,!?;:]+$/, '')
+          while (url.endsWith(')') && url.split(')').length > url.split('(').length) url = url.slice(0, -1)
+          addLink(url)
+        }
+      }
+      return [...links]
+    }
+
+    function TaskRow({ task, busy, completing, editable, onEdit, onComplete }) {
+      const [expanded, setExpanded] = React.useState(false)
+      const links = taskLinks(task)
+      return h('li', null,
+        h('div', { className: 'leinad-task-row' },
+          editable && h('input', {
+            type: 'checkbox',
+            checked: completing,
+            disabled: busy,
+            'aria-label': 'Fullfør ' + task.content,
+            onChange: onComplete
+          }),
+          h('a', {
+            href: 'https://app.todoist.com/app/task/' + encodeURIComponent(task.id),
+            target: '_blank',
+            rel: 'noopener noreferrer'
+          }, task.content, task.due?.date && h('small', null, task.due.date)),
+          editable && h('button', {
+            className: 'leinad-task-chip', type: 'button', disabled: busy, onClick: onEdit
+          }, 'Rediger'),
+          links.length > 0 && h('button', {
+            className: 'leinad-task-chip',
+            type: 'button',
+            'aria-expanded': expanded,
+            onClick: () => setExpanded(value => !value)
+          }, 'Lenker ' + links.length + (expanded ? ' ▴' : ' ▾'))
+        ),
+        expanded && links.length > 0 && h('ul', { className: 'leinad-task-links' },
+          links.map(([url, label]) => h('li', { key: url },
+            h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, label)
+          ))
+        )
+      )
+    }
+
+    function TaskEditor({ task, busy, onSave, onCancel, onDelete }) {
+      const [confirmDelete, setConfirmDelete] = React.useState(false)
+      return h('form', {
+        className: 'dial-form leinad-task-editor',
+        onSubmit(event) {
+          event.preventDefault()
+          const fields = new FormData(event.currentTarget)
+          const content = fields.get('content').trim()
+          if (content) onSave({ content, description: fields.get('description').trim() })
+        }
+      },
+      h('input', { name: 'content', placeholder: 'Oppgave', 'aria-label': 'Oppgave', defaultValue: task.content, required: true }),
+      h('textarea', { name: 'description', placeholder: 'Beskrivelse', 'aria-label': 'Beskrivelse', defaultValue: task.description, rows: 3 }),
+      h('div', { className: 'dial-actions' },
+        h('button', { type: 'submit', disabled: busy }, 'Lagre'),
+        h('button', { type: 'button', disabled: busy, onClick: onCancel }, 'Avbryt'),
+        task.id && h('button', {
+          type: 'button', disabled: busy,
+          onClick: () => confirmDelete ? onDelete() : setConfirmDelete(true)
+        }, confirmDelete ? 'Bekreft sletting' : 'Slett')
+      ))
+    }
+
+    function Main({ token, result, mutateTask, onResult }) {
+      const [editor, setEditor] = React.useState(null)
+      const [operation, setOperation] = React.useState(null)
+      const busy = operation !== null
+      const [error, setError] = React.useState('')
+      const [completed, setCompleted] = React.useState(null)
+      const pending = React.useRef(false)
+
+      async function change(action, task, fields) {
+        if (pending.current) return
+        pending.current = true
+        setOperation({ action, id: task.id })
+        setError('')
+        try {
+          const { tasks, refreshFailed } = await mutateTask(token, action, task, fields)
+          onResult({ tasks })
+          setEditor(null)
+          setCompleted(action === 'close' && !task.due?.is_recurring ? task : null)
+          if (refreshFailed) setError('Endringen er lagret. Kunne ikke synkronisere lista.')
+        } catch (error) {
+          setError(error.message)
+        } finally {
+          pending.current = false
+          setOperation(null)
+        }
+      }
+
       if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
-      return h(
-        React.Fragment,
-        null,
+      return h(React.Fragment, null,
+        mutateTask && !editor && h('div', { className: 'dial-actions' },
+          h('button', { type: 'button', disabled: busy, onClick: () => setEditor({}) }, 'Ny oppgave'),
+          completed && h('button', {
+            type: 'button', disabled: busy, onClick: () => change('reopen', completed)
+          }, 'Angre fullføring')
+        ),
+        editor && h(TaskEditor, {
+          key: editor.id ?? 'new', task: editor, busy,
+          onSave: fields => change(editor.id ? 'update' : 'create', editor, fields),
+          onCancel: () => setEditor(null),
+          onDelete: () => change('delete', editor)
+        }),
         result.loading && h('p', { role: 'status' }, 'Henter oppgaver …'),
-        result.error && h('p', { role: 'alert' }, result.error),
+        (error || result.error) && h('p', { role: 'alert' }, error || result.error),
         result.tasks && (result.tasks.length
           ? h('ul', { className: 'leinad-task-list' }, result.tasks.map(task =>
-            h('li', { key: task.id },
-              h('a', {
-                href: 'https://app.todoist.com/app/task/' + encodeURIComponent(task.id),
-                target: '_blank',
-                rel: 'noopener noreferrer'
-              }, task.content, task.due?.date && h('small', null, task.due.date))
-            )))
+            h(TaskRow, {
+              key: task.id, task, busy, editable: Boolean(mutateTask),
+              completing: operation?.action === 'close' && operation.id === task.id,
+              onEdit: () => setEditor(task), onComplete: () => change('close', task)
+            })
+          ))
           : h('p', { role: 'status' }, 'Ingen aktive oppgaver.'))
       )
     }
@@ -281,7 +548,7 @@
 
     const loading = { loading: true }
 
-    return function LeinadDialComponent({ todoistToken, loadTasks, readTasks }) {
+    return function LeinadDialComponent({ todoistToken, loadTasks, readTasks, mutateTask }) {
       const [view, setView] = React.useState('main')
       const [token, setToken] = React.useState(() => todoistToken.get())
       const [refresh, setRefresh] = React.useState(0)
@@ -315,7 +582,7 @@
         { view, onViewChange: setView },
         view === 'settings'
           ? h(Settings, { todoistToken, onTokenChange: changeToken })
-          : h(Main, { token, result })
+          : h(Main, { token, result, mutateTask, onResult: setResult })
       )
     }
   }
@@ -374,6 +641,7 @@
     root.render(React.createElement(Component, {
       todoistToken,
       loadTasks,
+      mutateTask,
       readTasks: () => todoistToken.get() ? GM_getValue(tasksKey, null) : null
     }))
   }
