@@ -59,7 +59,9 @@ var LeinadDialComponent = (() => {
 
     .leinad-task-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
     .leinad-task-row > a { flex: 1; min-width: 0; }
-    .leinad-task-row input { accent-color: #a7a7ff; }
+    .leinad-task-row .form-check-input { flex: none; margin: 0; accent-color: #a7a7ff; cursor: pointer; }
+    .leinad-task-row .form-check-input:checked { background-color: #6867c1; border-color: #6867c1; }
+    .leinad-task-confirm { margin: 0 0 8px 24px; }
     .leinad-task-row[data-completed] > a { color: #b5b6c4; text-decoration: line-through; }
     .leinad-task-chip { flex: none; padding: 4px 8px; border-radius: 999px; font: inherit; }
     .leinad-task-links { margin: 0 0 8px 24px; padding: 0; list-style: none; }
@@ -162,18 +164,18 @@ var LeinadDialComponent = (() => {
     return [...links]
   }
 
-  function TaskRow({ task, busy, checked, completed, editable, onEdit, onToggle }) {
+  function TaskRow({ task, busy, checked, completed, editable, onEdit, onToggle, onConfirm }) {
     const [expanded, setExpanded] = React.useState(false)
     const links = taskLinks(task)
     return h('li', null,
       h('div', { className: 'leinad-task-row', 'data-completed': completed ? '' : undefined },
         editable && h('input', {
           type: 'checkbox',
+          className: 'form-check-input',
           checked,
           disabled: busy,
           'aria-label': (completed ? 'Gjenåpne ' : 'Fullfør ') + task.content,
-          readOnly: true,
-          onClick: onToggle
+          onChange: onToggle
         }),
         h('a', {
           href: 'https://app.todoist.com/app/task/' + encodeURIComponent(task.id),
@@ -189,6 +191,9 @@ var LeinadDialComponent = (() => {
           'aria-expanded': expanded,
           onClick: () => setExpanded(value => !value)
         }, 'Lenker ' + links.length + (expanded ? ' ▴' : ' ▾'))
+      ),
+      onConfirm && h('div', { className: 'dial-actions leinad-task-confirm' },
+        h('button', { type: 'button', onClick: onConfirm, disabled: busy }, 'Fullfør forekomst')
       ),
       expanded && links.length > 0 && h('ul', { className: 'leinad-task-links' },
         links.map(([url, label]) => h('li', { key: url },
@@ -223,6 +228,7 @@ var LeinadDialComponent = (() => {
 
   function Main({ token, result, mutateTask, onResult, completedTasks, setCompletedTasks }) {
     const [editor, setEditor] = React.useState(null)
+    const [staged, setStaged] = React.useState(() => new Set())
     const [operations, setOperations] = React.useState(() => new Map())
     const [error, setError] = React.useState('')
     const pending = React.useRef(new Map())
@@ -235,6 +241,9 @@ var LeinadDialComponent = (() => {
       try {
         const { tasks, refreshFailed } = await mutateTask(token, action, task, fields)
         onResult({ tasks })
+        if (action === 'close' && task.due?.is_recurring) {
+          setStaged(previous => new Set([...previous].filter(id => id !== task.id)))
+        }
         if (action === 'create' || action === 'update' || action === 'delete') setEditor(null)
         if (action === 'close' && !task.due?.is_recurring) {
           const index = rows.findIndex(row => row.task.id === task.id)
@@ -249,6 +258,17 @@ var LeinadDialComponent = (() => {
         pending.current.delete(task.id)
         setOperations(new Map(pending.current))
       }
+    }
+
+    function toggle(task, completed) {
+      if (completed) return change('reopen', task)
+      if (!task.due?.is_recurring) return change('close', task)
+      setStaged(previous => {
+        const next = new Set(previous)
+        if (next.has(task.id)) next.delete(task.id)
+        else next.add(task.id)
+        return next
+      })
     }
 
     if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
@@ -278,9 +298,10 @@ var LeinadDialComponent = (() => {
         ? h('ul', { className: 'leinad-task-list' },
           rows.map(({ task, completed }) => h(TaskRow, {
             key: task.id, task, busy: operations.has(task.id), completed, editable: Boolean(mutateTask),
-            checked: completed || operations.get(task.id) === 'close',
+            checked: completed || staged.has(task.id) || operations.get(task.id) === 'close',
             onEdit: () => setEditor(task),
-            onToggle: () => change(completed ? 'reopen' : 'close', task)
+            onToggle: () => toggle(task, completed),
+            onConfirm: staged.has(task.id) ? () => change('close', task) : undefined
           }))
         )
         : result.tasks && h('p', { role: 'status' }, 'Ingen aktive oppgaver.')
@@ -377,7 +398,7 @@ function mountLeinadDial(runtime) {
 
   const host = document.createElement('tm-dial-panel')
   if (document.querySelector(host.localName)) return
-  host.dataset.componentRevision = 'task-checkbox-4'
+  host.dataset.componentRevision = 'task-checkbox-5'
 
   const shadow = host.attachShadow({ mode: 'closed' })
   const styles = new CSSStyleSheet()
@@ -435,7 +456,15 @@ function mountLeinadDial(runtime) {
     shadow.append(panel, dial)
   }
 
+  const bootstrap = document.createElement('link')
+  bootstrap.rel = 'stylesheet'
+  bootstrap.href = 'https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css'
+  bootstrap.integrity = 'sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB'
+  bootstrap.crossOrigin = 'anonymous'
+  shadow.prepend(bootstrap)
+
   const panel = shadow.getElementById('panel')
+  panel.dataset.bsTheme = 'dark'
   const dial = shadow.getElementById('dial')
   const content = shadow.getElementById('content')
   const tokenKey = 'tokens.todoist'
