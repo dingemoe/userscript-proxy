@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.5
+// @version      2.0.6
 // @description  React-panel nederst til høyre med Todoist-oppgaver og lokal tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
@@ -84,12 +84,19 @@
   const dial = shadow.getElementById('dial')
   const content = shadow.getElementById('content')
   const tokenKey = 'tokens.todoist'
+  const tasksKey = 'cache.todoist.tasks'
   let taskRequest
 
   const todoistToken = Object.freeze({
     get: () => GM_getValue(tokenKey, ''),
-    set: (token) => GM_setValue(tokenKey, token),
+    set: (token) => {
+      if (token === GM_getValue(tokenKey, '')) return
+      GM_deleteValue(tasksKey)
+      GM_setValue(tokenKey, token)
+      taskRequest = undefined
+    },
     clear: () => {
+      GM_deleteValue(tasksKey)
       GM_deleteValue(tokenKey)
       taskRequest = undefined
     }
@@ -144,9 +151,18 @@
   }
 
   function loadTasks(token, { refresh = false } = {}) {
-    if (!refresh && taskRequest?.token === token) return taskRequest.promise
+    if (!refresh) {
+      if (taskRequest?.token === token) return taskRequest.promise
+      const cached = GM_getValue(tasksKey, null)
+      if (Array.isArray(cached)) return Promise.resolve(cached)
+    }
 
-    const promise = fetchTasks(token)
+    const promise = fetchTasks(token).then(tasks => {
+      if (taskRequest?.promise === promise && todoistToken.get() === token) {
+        GM_setValue(tasksKey, tasks)
+      }
+      return tasks
+    })
     taskRequest = { token, promise }
     promise.catch(() => {
       if (taskRequest?.promise === promise) taskRequest = undefined
@@ -407,5 +423,5 @@
   document.documentElement.append(host)
 
   const savedToken = todoistToken.get()
-  if (savedToken) loadTasks(savedToken)
+  if (savedToken && !Array.isArray(GM_getValue(tasksKey, null))) loadTasks(savedToken)
 })()
