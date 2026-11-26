@@ -60,6 +60,7 @@ var LeinadDialComponent = (() => {
     .leinad-task-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
     .leinad-task-row > a { flex: 1; min-width: 0; }
     .leinad-task-row input { accent-color: #a7a7ff; }
+    .leinad-task-row[data-completed] > a { color: #b5b6c4; text-decoration: line-through; }
     .leinad-task-chip { flex: none; padding: 4px 8px; border-radius: 999px; font: inherit; }
     .leinad-task-links { margin: 0 0 8px 24px; padding: 0; list-style: none; }
     .leinad-task-links a { color: #a7a7ff; }
@@ -161,24 +162,24 @@ var LeinadDialComponent = (() => {
     return [...links]
   }
 
-  function TaskRow({ task, busy, completing, editable, onEdit, onComplete }) {
+  function TaskRow({ task, busy, checked, completed, editable, onEdit, onToggle }) {
     const [expanded, setExpanded] = React.useState(false)
     const links = taskLinks(task)
     return h('li', null,
-      h('div', { className: 'leinad-task-row' },
+      h('div', { className: 'leinad-task-row', 'data-completed': completed ? '' : undefined },
         editable && h('input', {
           type: 'checkbox',
-          checked: completing,
+          checked,
           disabled: busy,
-          'aria-label': 'Fullfør ' + task.content,
-          onChange: onComplete
+          'aria-label': (completed ? 'Gjenåpne ' : 'Fullfør ') + task.content,
+          onChange: onToggle
         }),
         h('a', {
           href: 'https://app.todoist.com/app/task/' + encodeURIComponent(task.id),
           target: '_blank',
           rel: 'noopener noreferrer'
         }, task.content, task.due?.date && h('small', null, task.due.date)),
-        editable && h('button', {
+        editable && !completed && h('button', {
           className: 'leinad-task-chip', type: 'button', disabled: busy, onClick: onEdit
         }, 'Rediger'),
         links.length > 0 && h('button', {
@@ -219,12 +220,11 @@ var LeinadDialComponent = (() => {
     ))
   }
 
-  function Main({ token, result, mutateTask, onResult }) {
+  function Main({ token, result, mutateTask, onResult, completedTasks, setCompletedTasks }) {
     const [editor, setEditor] = React.useState(null)
     const [operation, setOperation] = React.useState(null)
     const busy = operation !== null
     const [error, setError] = React.useState('')
-    const [completed, setCompleted] = React.useState(null)
     const pending = React.useRef(false)
 
     async function change(action, task, fields) {
@@ -236,7 +236,11 @@ var LeinadDialComponent = (() => {
         const { tasks, refreshFailed } = await mutateTask(token, action, task, fields)
         onResult({ tasks })
         setEditor(null)
-        setCompleted(action === 'close' && !task.due?.is_recurring ? task : null)
+        if (action === 'close' && !task.due?.is_recurring) {
+          setCompletedTasks(previous => [...previous.filter(item => item.id !== task.id), task])
+        } else if (action === 'reopen') {
+          setCompletedTasks(previous => previous.filter(item => item.id !== task.id))
+        }
         if (refreshFailed) setError('Endringen er lagret. Kunne ikke synkronisere lista.')
       } catch (error) {
         setError(error.message)
@@ -248,12 +252,13 @@ var LeinadDialComponent = (() => {
 
     if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
+    const activeTasks = result.tasks ?? []
+    const activeIds = new Set(activeTasks.map(task => task.id))
+    const completed = completedTasks.filter(task => !activeIds.has(task.id))
+
     return h(React.Fragment, null,
       mutateTask && !editor && h('div', { className: 'dial-actions' },
-        h('button', { type: 'button', disabled: busy, onClick: () => setEditor({}) }, 'Ny oppgave'),
-        completed && h('button', {
-          type: 'button', disabled: busy, onClick: () => change('reopen', completed)
-        }, 'Angre fullføring')
+        h('button', { type: 'button', disabled: busy, onClick: () => setEditor({}) }, 'Ny oppgave')
       ),
       editor && h(TaskEditor, {
         key: editor.id ?? 'new', task: editor, busy,
@@ -263,15 +268,19 @@ var LeinadDialComponent = (() => {
       }),
       result.loading && h('p', { role: 'status' }, 'Henter oppgaver …'),
       (error || result.error) && h('p', { role: 'alert' }, error || result.error),
-      result.tasks && (result.tasks.length
-        ? h('ul', { className: 'leinad-task-list' }, result.tasks.map(task =>
-          h(TaskRow, {
+      activeTasks.length + completed.length > 0
+        ? h('ul', { className: 'leinad-task-list' },
+          activeTasks.map(task => h(TaskRow, {
             key: task.id, task, busy, editable: Boolean(mutateTask),
-            completing: operation?.action === 'close' && operation.id === task.id,
-            onEdit: () => setEditor(task), onComplete: () => change('close', task)
-          })
-        ))
-        : h('p', { role: 'status' }, 'Ingen aktive oppgaver.'))
+            checked: operation?.action === 'close' && operation.id === task.id,
+            onEdit: () => setEditor(task), onToggle: () => change('close', task)
+          })),
+          completed.map(task => h(TaskRow, {
+            key: task.id, task, busy, editable: Boolean(mutateTask), checked: true, completed: true,
+            onToggle: () => change('reopen', task)
+          }))
+        )
+        : result.tasks && h('p', { role: 'status' }, 'Ingen aktive oppgaver.')
     )
   }
 
@@ -315,6 +324,7 @@ var LeinadDialComponent = (() => {
 
   return function LeinadDialComponent({ todoistToken, loadTasks, readTasks, mutateTask }) {
     const [view, setView] = React.useState('main')
+    const [completedTasks, setCompletedTasks] = React.useState([])
     const [token, setToken] = React.useState(() => todoistToken.get())
     const [refresh, setRefresh] = React.useState(0)
     const [result, setResult] = React.useState(() => {
@@ -338,6 +348,7 @@ var LeinadDialComponent = (() => {
     }
 
     function changeToken(value) {
+      if (value !== token) setCompletedTasks([])
       setToken(value)
       if (value) refreshTasks()
     }
@@ -347,7 +358,7 @@ var LeinadDialComponent = (() => {
       { view, onViewChange: setView },
       view === 'settings'
         ? h(Settings, { todoistToken, onTokenChange: changeToken })
-        : h(Main, { token, result, mutateTask, onResult: setResult })
+        : h(Main, { token, result, mutateTask, onResult: setResult, completedTasks, setCompletedTasks })
     )
   }
 })()
