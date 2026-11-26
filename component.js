@@ -3,14 +3,33 @@ var LeinadDialComponent = (() => {
 
   const h = React.createElement
 
-  const layoutHtml = `
-    <div class="dial-form">
-      <nav class="dial-actions" aria-label="Panelvisning">
-        <button type="button" data-view="main" aria-pressed="true">Main</button>
-        <button type="button" data-view="settings" aria-pressed="false">Innstillinger</button>
-      </nav>
-      <div data-view-content></div>
-    </div>
+  const layoutCss = `
+    .leinad-dial-layout {
+      box-sizing: border-box;
+      height: min(320px, 58vh);
+      height: min(320px, 58dvh);
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .leinad-dial-layout > nav { flex: none; }
+
+    .leinad-dial-view {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      animation: leinad-dial-enter 140ms ease-out both;
+    }
+
+    @keyframes leinad-dial-enter {
+      from { opacity: 0.75; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .leinad-dial-view { animation: none; }
+    }
   `
 
   const mainHtml = {
@@ -37,33 +56,27 @@ var LeinadDialComponent = (() => {
   `
 
   function Layout({ view, onViewChange, children }) {
-    const [outlet, setOutlet] = React.useState(null)
-    const shellRef = React.useRef(null)
-
-    React.useLayoutEffect(() => {
-      setOutlet(shellRef.current.querySelector('[data-view-content]'))
-    }, [])
-
-    React.useLayoutEffect(() => {
-      for (const button of shellRef.current.querySelectorAll('button[data-view]')) {
-        button.setAttribute('aria-pressed', String(button.dataset.view === view))
-      }
-    }, [view])
-
-    function handleClick(event) {
-      const button = event.target.closest('button[data-view]')
-      if (button) onViewChange(button.dataset.view)
-    }
-
     return h(
-      React.Fragment,
-      null,
-      h('div', {
-        ref: shellRef,
-        onClick: handleClick,
-        dangerouslySetInnerHTML: { __html: layoutHtml }
-      }),
-      outlet && ReactDOM.createPortal(children, outlet)
+      'div',
+      { className: 'dial-form leinad-dial-layout' },
+      h('style', null, layoutCss),
+      h(
+        'nav',
+        { className: 'dial-actions', 'aria-label': 'Panelvisning' },
+        h('button', {
+          type: 'button',
+          'data-view': 'main',
+          'aria-pressed': view === 'main',
+          onClick: () => onViewChange('main')
+        }, 'Main'),
+        h('button', {
+          type: 'button',
+          'data-view': 'settings',
+          'aria-pressed': view === 'settings',
+          onClick: () => onViewChange('settings')
+        }, 'Innstillinger')
+      ),
+      h('div', { className: 'leinad-dial-view', 'data-view-content': '', key: view }, children)
     )
   }
 
