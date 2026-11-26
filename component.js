@@ -237,9 +237,10 @@ var LeinadDialComponent = (() => {
         onResult({ tasks })
         setEditor(null)
         if (action === 'close' && !task.due?.is_recurring) {
-          setCompletedTasks(previous => [...previous.filter(item => item.id !== task.id), task])
+          const index = rows.findIndex(row => row.task.id === task.id)
+          setCompletedTasks(previous => [...previous.filter(row => row.task.id !== task.id), { task, index }])
         } else if (action === 'reopen') {
-          setCompletedTasks(previous => previous.filter(item => item.id !== task.id))
+          setCompletedTasks(previous => previous.filter(row => row.task.id !== task.id))
         }
         if (refreshFailed) setError('Endringen er lagret. Kunne ikke synkronisere lista.')
       } catch (error) {
@@ -252,9 +253,14 @@ var LeinadDialComponent = (() => {
 
     if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
-    const activeTasks = result.tasks ?? []
-    const activeIds = new Set(activeTasks.map(task => task.id))
-    const completed = completedTasks.filter(task => !activeIds.has(task.id))
+    const completedIds = new Set(completedTasks.map(row => row.task.id))
+    const rows = (result.tasks ?? [])
+      .filter(task => !completedIds.has(task.id))
+      .map(task => ({ task, completed: false }))
+
+    for (const { task, index } of completedTasks) {
+      rows.splice(Math.max(0, index), 0, { task, completed: true })
+    }
 
     return h(React.Fragment, null,
       mutateTask && !editor && h('div', { className: 'dial-actions' },
@@ -268,16 +274,13 @@ var LeinadDialComponent = (() => {
       }),
       result.loading && h('p', { role: 'status' }, 'Henter oppgaver …'),
       (error || result.error) && h('p', { role: 'alert' }, error || result.error),
-      activeTasks.length + completed.length > 0
+      rows.length > 0
         ? h('ul', { className: 'leinad-task-list' },
-          activeTasks.map(task => h(TaskRow, {
-            key: task.id, task, busy, editable: Boolean(mutateTask),
-            checked: operation?.action === 'close' && operation.id === task.id,
-            onEdit: () => setEditor(task), onToggle: () => change('close', task)
-          })),
-          completed.map(task => h(TaskRow, {
-            key: task.id, task, busy, editable: Boolean(mutateTask), checked: true, completed: true,
-            onToggle: () => change('reopen', task)
+          rows.map(({ task, completed }) => h(TaskRow, {
+            key: task.id, task, busy, completed, editable: Boolean(mutateTask),
+            checked: completed || (operation?.action === 'close' && operation.id === task.id),
+            onEdit: () => setEditor(task),
+            onToggle: () => change(completed ? 'reopen' : 'close', task)
           }))
         )
         : result.tasks && h('p', { role: 'status' }, 'Ingen aktive oppgaver.')
@@ -370,6 +373,7 @@ function mountLeinadDial(runtime) {
 
   const host = document.createElement('tm-dial-panel')
   if (document.querySelector(host.localName)) return
+  host.dataset.componentRevision = 'task-checkbox-2'
 
   const shadow = host.attachShadow({ mode: 'closed' })
   const styles = new CSSStyleSheet()
