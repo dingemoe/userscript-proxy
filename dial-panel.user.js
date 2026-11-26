@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dial Panel
 // @namespace    https://leinad.no/
-// @version      2.0.7
+// @version      2.0.8
 // @description  React-panel nederst til høyre med Todoist-oppgaver og lokal tokenlagring.
 // @match        *://*/*
 // @run-at       document-idle
@@ -171,7 +171,7 @@
   function createDialComponent() {
     const h = React.createElement
 
-    const layoutCss = `.leinad-dial-layout{box-sizing:border-box;height:100%;display:flex;flex-direction:column;min-width:0}.leinad-dial-header{flex:none;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #30313a}.leinad-dial-header h2{margin:0;font-size:15px;font-weight:600}.leinad-dial-header .dial-actions button{width:36px;height:36px;display:grid;place-items:center;padding:0}.leinad-dial-header button svg{width:18px;height:18px}.leinad-dial-view{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px;animation:leinad-dial-enter 140ms ease-out both}.leinad-task-list{list-style:none;margin:8px 0 0;padding:0}.leinad-task-list li{border-bottom:1px solid #30313a}.leinad-task-list a{display:block;padding:9px 4px;color:inherit;text-decoration:none;overflow-wrap:anywhere}.leinad-task-list a:hover{background:#22232b}.leinad-task-list small{display:block;color:#b5b6c4}@keyframes leinad-dial-enter{from{opacity:0.75;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media (prefers-reduced-motion:reduce){.leinad-dial-view{animation:none}}`
+    const layoutCss = `.leinad-dial-layout{box-sizing:border-box;height:100%;display:flex;flex-direction:column;min-width:0}.leinad-dial-header{flex:none;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid #30313a}.leinad-dial-header h2{margin:0;font-size:15px;font-weight:600}.leinad-dial-header .dial-actions button{width:36px;height:36px;display:grid;place-items:center;padding:0;border:0;background:transparent;color:#b5b6c4}.leinad-dial-header .dial-actions button:is(:hover,[aria-pressed=true]){color:#a7a7ff}.leinad-dial-header button svg{width:18px;height:18px}.leinad-dial-view{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:16px;animation:leinad-dial-enter 140ms ease-out both}.leinad-task-list{list-style:none;margin:8px 0 0;padding:0}.leinad-task-list li{border-bottom:1px solid #30313a}.leinad-task-list a{display:block;padding:9px 4px;color:inherit;text-decoration:none;overflow-wrap:anywhere}.leinad-task-list a:hover{background:#22232b}.leinad-task-list small{display:block;color:#b5b6c4}@keyframes leinad-dial-enter{from{opacity:0.75;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}@media (prefers-reduced-motion:reduce){.leinad-dial-view{animation:none}}`
 
     const settingsHtml = `
       <form class="dial-form" autocomplete="off">
@@ -222,16 +222,12 @@
       )
     }
 
-    function Main({ token, result, onRefresh }) {
+    function Main({ token, result }) {
       if (!token) return h('p', null, 'Legg inn Todoist-tokenet under Innstillinger.')
 
       return h(
         React.Fragment,
         null,
-        h('div', { className: 'dial-actions items-center justify-between' },
-          h('strong', null, 'Todoist'),
-          h('button', { type: 'button', onClick: onRefresh, disabled: result.loading }, 'Oppdater')
-        ),
         result.loading && h('p', { role: 'status' }, 'Henter oppgaver …'),
         result.error && h('p', { role: 'alert' }, result.error),
         result.tasks && (result.tasks.length
@@ -319,7 +315,7 @@
         { view, onViewChange: setView },
         view === 'settings'
           ? h(Settings, { todoistToken, onTokenChange: changeToken })
-          : h(Main, { token, result, onRefresh: refreshTasks })
+          : h(Main, { token, result })
       )
     }
   }
