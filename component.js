@@ -4,7 +4,7 @@ var LeinadDialComponent = (() => {
   const h = React.createElement
 
   const layoutCss = `
-    .dial-form.leinad-dial-layout {
+    .leinad-dial-layout {
       box-sizing: border-box;
       height: 100%;
       display: flex;
@@ -12,12 +12,33 @@ var LeinadDialComponent = (() => {
       min-width: 0;
     }
 
-    .leinad-dial-layout > nav { flex: none; }
+    .leinad-dial-header {
+      flex: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid #30313a;
+    }
+
+    .leinad-dial-header h2 { margin: 0; font-size: 15px; font-weight: 600; }
+
+    .leinad-dial-header .dial-actions button {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      padding: 0;
+    }
+
+    .leinad-dial-header button svg { width: 18px; height: 18px; }
 
     .leinad-dial-view {
       flex: 1;
       min-height: 0;
       overflow: auto;
+      overscroll-behavior: contain;
+      padding: 16px;
       animation: leinad-dial-enter 140ms ease-out both;
     }
 
@@ -61,26 +82,32 @@ var LeinadDialComponent = (() => {
     </form>
   `
 
+  const views = [
+    { id: 'main', label: 'Oppgaveliste', icon: 'M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01' },
+    { id: 'settings', label: 'Innstillinger', icon: 'M10 3h4l.6 2.5 2 .9 2.4-1 2 3.5-1.9 1.7v2.8l1.9 1.7-2 3.5-2.4-1-2 .9L14 21h-4l-.6-2.5-2-.9-2.4 1-2-3.5 1.9-1.7v-2.8L3 8.9l2-3.5 2.4 1 2-.9L10 3Z' }
+  ]
+
   function Layout({ view, onViewChange, children }) {
     return h(
       'div',
-      { className: 'dial-form leinad-dial-layout' },
+      { className: 'leinad-dial-layout' },
       h('style', null, layoutCss),
-      h(
-        'nav',
-        { className: 'dial-actions', 'aria-label': 'Panelvisning' },
-        h('button', {
-          type: 'button',
-          'data-view': 'main',
-          'aria-pressed': view === 'main',
-          onClick: () => onViewChange('main')
-        }, 'Main'),
-        h('button', {
-          type: 'button',
-          'data-view': 'settings',
-          'aria-pressed': view === 'settings',
-          onClick: () => onViewChange('settings')
-        }, 'Innstillinger')
+      h('header', { className: 'leinad-dial-header' },
+        h('h2', null, 'Snarveier'),
+        h('nav', { className: 'dial-actions', 'aria-label': 'Panelvisning' },
+          views.map(({ id, label, icon }) => h('button', {
+            key: id,
+            type: 'button',
+            'data-view': id,
+            title: label,
+            'aria-label': label,
+            'aria-pressed': view === id,
+            onClick: () => onViewChange(id)
+          }, h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true },
+            h('path', { d: icon }),
+            id === 'settings' && h('circle', { cx: 12, cy: 12, r: 3 })
+          )))
+        )
       ),
       h('div', { className: 'leinad-dial-view', 'data-view-content': '', key: view }, children)
     )
