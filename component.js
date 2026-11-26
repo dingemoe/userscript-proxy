@@ -222,20 +222,19 @@ var LeinadDialComponent = (() => {
 
   function Main({ token, result, mutateTask, onResult, completedTasks, setCompletedTasks }) {
     const [editor, setEditor] = React.useState(null)
-    const [operation, setOperation] = React.useState(null)
-    const busy = operation !== null
+    const [operations, setOperations] = React.useState(() => new Map())
     const [error, setError] = React.useState('')
-    const pending = React.useRef(false)
+    const pending = React.useRef(new Map())
 
     async function change(action, task, fields) {
-      if (pending.current) return
-      pending.current = true
-      setOperation({ action, id: task.id })
+      if (pending.current.has(task.id)) return
+      pending.current.set(task.id, action)
+      setOperations(new Map(pending.current))
       setError('')
       try {
         const { tasks, refreshFailed } = await mutateTask(token, action, task, fields)
         onResult({ tasks })
-        setEditor(null)
+        if (action === 'create' || action === 'update' || action === 'delete') setEditor(null)
         if (action === 'close' && !task.due?.is_recurring) {
           const index = rows.findIndex(row => row.task.id === task.id)
           setCompletedTasks(previous => [...previous.filter(row => row.task.id !== task.id), { task, index }])
@@ -246,8 +245,8 @@ var LeinadDialComponent = (() => {
       } catch (error) {
         setError(error.message)
       } finally {
-        pending.current = false
-        setOperation(null)
+        pending.current.delete(task.id)
+        setOperations(new Map(pending.current))
       }
     }
 
@@ -264,10 +263,10 @@ var LeinadDialComponent = (() => {
 
     return h(React.Fragment, null,
       mutateTask && !editor && h('div', { className: 'dial-actions' },
-        h('button', { type: 'button', disabled: busy, onClick: () => setEditor({}) }, 'Ny oppgave')
+        h('button', { type: 'button', disabled: operations.has(undefined), onClick: () => setEditor({}) }, 'Ny oppgave')
       ),
       editor && h(TaskEditor, {
-        key: editor.id ?? 'new', task: editor, busy,
+        key: editor.id ?? 'new', task: editor, busy: operations.has(editor.id),
         onSave: fields => change(editor.id ? 'update' : 'create', editor, fields),
         onCancel: () => setEditor(null),
         onDelete: () => change('delete', editor)
@@ -277,8 +276,8 @@ var LeinadDialComponent = (() => {
       rows.length > 0
         ? h('ul', { className: 'leinad-task-list' },
           rows.map(({ task, completed }) => h(TaskRow, {
-            key: task.id, task, busy, completed, editable: Boolean(mutateTask),
-            checked: completed || (operation?.action === 'close' && operation.id === task.id),
+            key: task.id, task, busy: operations.has(task.id), completed, editable: Boolean(mutateTask),
+            checked: completed || operations.get(task.id) === 'close',
             onEdit: () => setEditor(task),
             onToggle: () => change(completed ? 'reopen' : 'close', task)
           }))
@@ -373,7 +372,7 @@ function mountLeinadDial(runtime) {
 
   const host = document.createElement('tm-dial-panel')
   if (document.querySelector(host.localName)) return
-  host.dataset.componentRevision = 'task-checkbox-2'
+  host.dataset.componentRevision = 'task-checkbox-3'
 
   const shadow = host.attachShadow({ mode: 'closed' })
   const styles = new CSSStyleSheet()
@@ -455,49 +454,64 @@ function mountLeinadDial(runtime) {
 
   function requestTodoist(token, path, { method = 'GET', body } = {}) {
     return new Promise((resolve, reject) => {
+      let request
+      const timer = setTimeout(() => {
+        connectionError()
+        request?.abort?.()
+      }, 12000)
+
       function connectionError() {
+        clearTimeout(timer)
         reject(new Error('Kunne ikke kontakte Todoist. Prøv igjen.'))
       }
 
-      GM_xmlhttpRequest({
-        method,
-        url: 'https://api.todoist.com/api/v1/tasks' + path,
-        headers: {
-          Authorization: 'Bearer ' + token,
-          ...(body && { 'Content-Type': 'application/json' })
-        },
-        data: body ? JSON.stringify(body) : undefined,
-        anonymous: true,
-        redirect: 'error',
-        timeout: 12000,
-        onerror: connectionError,
-        ontimeout: connectionError,
-        onload(response) {
-          if (response.status === 401 || response.status === 403) {
-            reject(new Error('Todoist avviste tilgangen. Sjekk tokenet i Innstillinger.'))
-            return
+      try {
+        request = GM_xmlhttpRequest({
+          method,
+          url: 'https://api.todoist.com/api/v1/tasks' + path,
+          headers: {
+            Authorization: 'Bearer ' + token,
+            ...(body && { 'Content-Type': 'application/json' })
+          },
+          data: body ? JSON.stringify(body) : undefined,
+          anonymous: true,
+          redirect: 'error',
+          timeout: 12000,
+          onerror: connectionError,
+          ontimeout: connectionError,
+          onabort: connectionError,
+          onload(response) {
+            clearTimeout(timer)
+            if (response.status === 401 || response.status === 403) {
+              reject(new Error('Todoist avviste tilgangen. Sjekk tokenet i Innstillinger.'))
+              return
+            }
+            if (response.status < 200 || response.status >= 300) {
+              reject(new Error('Kunne ikke hente oppgaver fra Todoist (' + response.status + ').'))
+              return
+            }
+            if (response.status === 204 || !response.responseText) {
+              resolve(null)
+              return
+            }
+            try {
+              resolve(JSON.parse(response.responseText))
+            } catch {
+              reject(new Error('Uventet svar fra Todoist.'))
+            }
           }
-          if (response.status < 200 || response.status >= 300) {
-            reject(new Error('Kunne ikke hente oppgaver fra Todoist (' + response.status + ').'))
-            return
-          }
-          if (response.status === 204 || !response.responseText) {
-            resolve(null)
-            return
-          }
-          try {
-            resolve(JSON.parse(response.responseText))
-          } catch {
-            reject(new Error('Uventet svar fra Todoist.'))
-          }
-        }
-      })
+        })
+      } catch (error) {
+        clearTimeout(timer)
+        reject(error)
+      }
     })
   }
 
   async function fetchTasks(token) {
     const tasks = []
     let cursor
+    const cursors = new Set()
     do {
       const query = new URLSearchParams({ limit: '100' })
       if (cursor) query.set('cursor', cursor)
@@ -505,6 +519,8 @@ function mountLeinadDial(runtime) {
       if (!Array.isArray(page.results)) throw new Error('Uventet svar fra Todoist.')
       tasks.push(...page.results)
       cursor = page.next_cursor
+      if (cursor && cursors.has(cursor)) throw new Error('Todoist gjentok en side i oppgavelista.')
+      if (cursor) cursors.add(cursor)
     } while (cursor)
     return tasks
   }
@@ -527,16 +543,12 @@ function mountLeinadDial(runtime) {
     return promise
   }
 
-  let mutationPending = false
+  let mutationQueue = Promise.resolve()
 
-  async function mutateTask(token, action, task, fields) {
-    if (mutationPending) throw new Error('Vent til den forrige endringen er ferdig.')
-    mutationPending = true
-    try {
-      return await saveTaskChange(token, action, task, fields)
-    } finally {
-      mutationPending = false
-    }
+  function mutateTask(token, action, task, fields) {
+    const request = mutationQueue.then(() => saveTaskChange(token, action, task, fields))
+    mutationQueue = request.catch(() => {})
+    return request
   }
 
   async function saveTaskChange(token, action, task, fields) {
@@ -577,6 +589,11 @@ function mountLeinadDial(runtime) {
     }
 
     GM_setValue(tasksKey, tasks)
+    if (action === 'close' && !task.due?.is_recurring) {
+      taskRequest = { token, promise: Promise.resolve(tasks), pending: false }
+      return { tasks }
+    }
+
     taskRequest = undefined
     try {
       return { tasks: await loadTasks(token, { refresh: true }) }
